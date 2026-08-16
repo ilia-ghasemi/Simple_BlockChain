@@ -1,12 +1,13 @@
 import time
 import json
 import requests
+from pydantic import BaseModel
 from Crypto.Hash import keccak
 from urllib.parse import urlparse
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-class Blockchain:
+class BlockChain:
     def __init__(self , address : str):
         self.address = address
         self.chain = []
@@ -230,9 +231,89 @@ class Blockchain:
         return initial_proof // (2 ** halvings)
 
 
-wallet_address = "some_wallet_address"
-blockchain = Blockchain(wallet_address)
-print(blockchain.chain)
-app = FastAPI()
+class TransactionRequest(BaseModel):
+    sender : str
+    recipient : str
+    amount : float
+class NodeRegisterRequest(BaseModel):
+    nodes : list[str]
 
-# we need 8 endpoint
+wallet_address = "some_wallet_address"
+blockchain = BlockChain(wallet_address)
+
+app = FastAPI()
+@app.get("/get_chain")
+def get_chain():
+    return {
+        "chain" : blockchain.chain,
+        "length" : len(blockchain.chain)
+    }
+@app.post("/mine")
+def mine():
+    blockchain.mine_block()
+    mined_block = blockchain.chain[-1]
+    return {
+        "message" : "Block mined successfully",
+        "block" : mined_block
+    }
+@app.get("/mempool")
+def get_mempool():
+    return {
+        "mempool" : blockchain.mempool,
+        "count" : len(blockchain.mempool)
+    }
+@app.get("/balance/{address}")
+def get_balance(address : str):
+    balance = blockchain.get_balance(address)
+    return {
+        "address" : address,
+        "balance" : balance
+    }
+@app.get("/nodes")
+def get_nodes():
+    return {
+        "nodes" : list(blockchain.nodes)
+    }
+@app.post("/consensus")
+def consensus():
+    replaced = blockchain.consensus()
+    if replaced:
+        return {
+            "message" : "Our chain was replaced with the longer valid network chain",
+            "chain" : blockchain.chain
+        }
+    return {
+        "message" : "Our chain is authoritative and up to date",
+        "chain" : blockchain.chain
+    }
+@app.post("/transactions/new")
+def new_transaction(trx : TransactionRequest):
+    success = blockchain.new_trx(trx.sender , trx.recipient , trx.amount)
+    if not success:
+        return JSONResponse(
+            status_code = 400,
+            content = {
+                "message" : "Transaction failed! Insufficient balance or invalid parameters"
+            }
+        )
+    return {
+        "message" : "Transaction successfully added to mempool"
+    }
+@app.post("/nodes/register")
+def register_node(data : NodeRegisterRequest):
+    if not data.nodes:
+        return JSONResponse(
+            status_code = 400 , 
+            content = {
+                "message" : "Please supply a valid list of nodes"
+            }
+        )
+    added_node = []
+    for node_address in data.nodes:
+        if blockchain.add_node(node_address):
+            added_node.append(node_address)
+    return {
+        "message" : "New nodes have been added",
+        "added_nodes" : added_node,
+        "total_nodes" : list(blockchain.nodes)
+    }
